@@ -3,10 +3,15 @@
     "compliance-auditor": {
       "command": "docker",
       "args": [
-        "exec", "-i", "compliance_mcp", "python", "server.py"
+        "exec", 
+        "-i", 
+        "compliance_mcp", 
+        "python", 
+        "-m", 
+        "mcp_server.server"
       ],
       "env": {
-        "BACKEND_HOST": "http://localhost:8000"
+        "BACKEND_HOST": "http://compliance_backend:8000"
       }
     }
   }

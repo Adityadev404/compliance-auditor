@@ -1,80 +1,69 @@
-version: '3.8'
-
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: compliance_ollama
+    container_name: ollama-local
     ports:
       - "11434:11434"
     volumes:
       - ollama_models:/root/.ollama
     restart: unless-stopped
-    healthcheck:
-      # We changed localhost to 127.0.0.1 to make the health check more stable across Windows environments
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:11434/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
 
   ollama-init:
     image: ollama/ollama:latest
-    container_name: compliance_ollama_init
+    container_name: ollama-init-worker
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ollama_models:/root/.ollama
     environment:
-      - OLLAMA_HOST=http://ollama:11434
-    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:7b"]
+      - OLLAMA_HOST=http://ollama-local:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:3b"]
     restart: "no"
 
-  backend:
+  mcp-server:
+    build:
+      context: ./mcp_server
+      dockerfile: Dockerfile
+    container_name: mcp-server-1
+    ports:
+      - "5000:5000"
+    environment:
+      - BACKEND_HOST=http://fastapi-app-1:8000
+    restart: unless-stopped
+
+  fastapi-app:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: compliance_backend
+    container_name: fastapi-app-1
     ports:
       - "8000:8000"
     environment:
-      # FIX: Pointing exactly to 'ollama' matching your service name above
-      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_HOST=http://ollama-local:11434
+      - BACKEND_HOST=http://localhost:8000
       - LOG_LEVEL=INFO
       - DEBUG=false
     depends_on:
       ollama:
-        condition: service_healthy
-      ollama-init:
-        condition: service_completed_successfully
+        condition: service_started
+      mcp-server:
+        condition: service_started
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
 
-  frontend:
+  streamlit-ui:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: compliance_frontend
+    container_name: streamlit-ui-1
     ports:
       - "8501:8501"
     environment:
-      # FIX: Pointing exactly to 'backend' matching your service name above
-      - BACKEND_HOST=http://backend:8000
+      - BACKEND_HOST=http://fastapi-app-1:8000
     depends_on:
-      backend:
-        condition: service_healthy
+      fastapi-app:
+        condition: service_started
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8501/_stcore/health || exit 1"]
-      interval: 20s
-      timeout: 10s
-      retries: 5
-      start_period: 15s
 
 volumes:
   ollama_models:

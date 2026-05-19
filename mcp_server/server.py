@@ -16,19 +16,26 @@ Run locally (outside Docker):
   python server.py
 
 Run inside Docker:
-  Handled automatically by docker-compose.yml (port 8080).
+  Automatically handled by docker-compose.yml (listens on port 5000).
 """
 
 import os
 import json
-import re
 from typing import Any
+import sys
+import logging
+import asyncio
 
 import httpx
-import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
+from fastapi import FastAPI
+import uvicorn
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -352,25 +359,83 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
 
 
 # ---------------------------------------------------------------------------
+# FastAPI Setup - Keep container alive + provide health check
+# ---------------------------------------------------------------------------
+
+app = FastAPI(title="Compliance Auditor MCP Server")
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "service": "compliance-auditor-mcp",
+        "version": "1.0.0",
+    }
+
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "service": "compliance-auditor-mcp",
+        "version": "1.0.0",
+        "status": "running",
+        "endpoints": ["/health", "/tools"],
+    }
+
+
+@app.get("/tools")
+async def list_available_tools():
+    """List all available MCP tools."""
+    tools = await list_tools()
+    return {
+        "tools": [
+            {
+                "name": tool.name,
+                "description": tool.description,
+            }
+            for tool in tools
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 async def main():
+    """Main entry point using stdio transport for MCP."""
+    import mcp.server.stdio
+    
+    logger.info("Starting Compliance Auditor MCP Server...")
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+        logger.info("MCP Server initialized, running...")
         await server.run(
             read_stream,
             write_stream,
             InitializationOptions(
                 server_name="compliance-auditor",
                 server_version="1.0.0",
-                capabilities=server.get_capabilities(
-                    notification_options=None,
-                    experimental_capabilities={},
+                capabilities=types.ServerCapabilities(
+                    tools=types.ToolsCapability(listChanged=True)
                 ),
             ),
         )
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    # Check if running with stdio (no TTY) or with HTTP server
+    # If there's no TTY, fall back to HTTP mode
+    if not sys.stdin.isatty():
+        logger.info("No TTY detected, running HTTP server mode on port 5000")
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=5000,
+            log_level="info",
+        )
+    else:
+        logger.info("TTY detected, running MCP stdio mode")
+        asyncio.run(main())
