@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: compliance_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      # We changed localhost to 127.0.0.1 to make the health check more stable across Windows environments
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:11434/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: compliance_ollama_init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "ollama pull qwen2.5:7b"]
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: compliance_backend
+    ports:
+      - "8000:8000"
+    environment:
+      # FIX: Pointing exactly to 'ollama' matching your service name above
+      - OLLAMA_HOST=http://ollama:11434
+      - LOG_LEVEL=INFO
+      - DEBUG=false
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: compliance_frontend
+    ports:
+      - "8501:8501"
+    environment:
+      # FIX: Pointing exactly to 'backend' matching your service name above
+      - BACKEND_HOST=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8501/_stcore/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  ollama_models:

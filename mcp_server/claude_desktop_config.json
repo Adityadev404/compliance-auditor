@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "compliance-auditor": {
+      "command": "docker",
+      "args": [
+        "exec", "-i", "compliance_mcp", "python", "server.py"
+      ],
+      "env": {
+        "BACKEND_HOST": "http://localhost:8000"
+      }
+    }
+  }
+}
